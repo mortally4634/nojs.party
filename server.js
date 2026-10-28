@@ -13,8 +13,8 @@ import { extname, join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkdirSync, unlink } from "node:fs";
 
-import { Boards, Threads, Posts } from "./db.js";
-import { parseName, hashDeletePassword } from "./util.js";
+import { Boards, Threads, Posts, Settings } from "./db.js";
+import { parseName, hashDeletePassword, hasLink } from "./util.js";
 import { imageSize } from "./imagesize.js";
 import * as view from "./render.js";
 import {
@@ -151,15 +151,16 @@ app.get("/:slug/", (req, res, next) => {
   const board = Boards.get(req.params.slug);
   if (!board) return next();
 
+  const seeAll = res.locals.isMod; // mods see PPA-held threads/replies too
   const page_ = Math.max(1, parseInt(req.query.page, 10) || 1);
-  const total = Threads.count(board.slug);
+  const total = Threads.count(board.slug, seeAll);
   const pageCount = Math.max(1, Math.ceil(total / THREADS_PER_PAGE));
   const offset = (page_ - 1) * THREADS_PER_PAGE;
 
-  const threads = Threads.page(board.slug, THREADS_PER_PAGE, offset).map((t) => ({
+  const threads = Threads.page(board.slug, THREADS_PER_PAGE, offset, seeAll).map((t) => ({
     ...t,
     op: Posts.op(t.id),
-    previews: Posts.previewReplies(t.id, PREVIEW_REPLIES),
+    previews: Posts.previewReplies(t.id, PREVIEW_REPLIES, seeAll),
   }));
 
   page(res, {
@@ -190,12 +191,13 @@ app.post("/:slug/thread", acceptImage("image"), (req, res, next) => {
   };
 
   if (req.uploadError) return fail(req.uploadError);
-  if (!comment && !req.file)
-    return fail("A thread needs a comment or an image.");
+  // Threads MUST have an image — this is the core rule of the board.
+  if (!req.file) return fail("A thread requires an image.");
   if (comment.length > 8000) return fail("Comment is too long.");
 
   const now = Date.now();
-  const threadId = Threads.create(board.slug, subject, now);
+  const flags = buildFlags(comment, true);
+  const threadId = Threads.create(board.slug, subject, now, !flags.ppaHeld);
   const { name, tripcode } = parseName(req.body.name);
   const img = fileMeta(req.file);
 
@@ -213,9 +215,16 @@ app.post("/:slug/thread", acceptImage("image"), (req, res, next) => {
     is_op: 1,
     del_hash: hashDeletePassword(req.body.delpw),
     created_at: now,
+    approved: flags.approved,
+    media_approved: flags.media_approved,
+    links_approved: flags.links_approved,
+    has_link: flags.has_link,
   });
-  Threads.touchImageOnOp(threadId, !!req.file);
 
+  // A thread held by PPA stays hidden until approved, so don't count it yet.
+  if (!flags.ppaHeld) Threads.touchImageOnOp(threadId, true);
+
+  if (flags.ppaHeld) return res.redirect(303, pendingUrl(board.slug));
   res.redirect(303, `/${board.slug}/thread/${threadId}`);
 });
 
@@ -225,8 +234,10 @@ app.get("/:slug/thread/:id", (req, res, next) => {
   if (!board) return next();
   const thread = Threads.get(parseInt(req.params.id, 10));
   if (!thread || thread.board !== board.slug) return next();
+  // A thread whose OP is still pending (PPA) is invisible to the public.
+  if (!thread.approved && !res.locals.isMod) return next();
 
-  const posts = Posts.forThread(thread.id);
+  const posts = Posts.forThread(thread.id, res.locals.isMod);
   page(res, {
     title: `${thread.subject || "Thread No." + thread.id} — /${board.slug}/`,
     board: board.slug,
@@ -255,6 +266,7 @@ app.post("/:slug/thread/:id/reply", acceptImage("image"), (req, res, next) => {
   if (comment.length > 8000) return fail("Comment is too long.");
 
   const now = Date.now();
+  const flags = buildFlags(comment, !!req.file);
   const { name, tripcode } = parseName(req.body.name);
   const img = fileMeta(req.file);
 
@@ -272,18 +284,17 @@ app.post("/:slug/thread/:id/reply", acceptImage("image"), (req, res, next) => {
     is_op: 0,
     del_hash: hashDeletePassword(req.body.delpw),
     created_at: now,
+    approved: flags.approved,
+    media_approved: flags.media_approved,
+    links_approved: flags.links_approved,
+    has_link: flags.has_link,
   });
 
-  // Bump the thread unless it has hit the bump limit (sage-like behavior).
-  if (thread.reply_count < BUMP_LIMIT) {
-    Threads.bump(thread.id, now, !!req.file);
-  } else {
-    // Still count the reply/image, just don't move the thread up.
-    db.prepare(
-      "UPDATE threads SET reply_count = reply_count + 1, image_count = image_count + ? WHERE id = ?"
-    ).run(req.file ? 1 : 0, thread.id);
-  }
+  // A reply held by PPA does not bump or count until a mod approves it, so spam
+  // can't float a thread before review. Otherwise, bump/count immediately.
+  if (!flags.ppaHeld) revealReply(thread, now, !!req.file);
 
+  if (flags.ppaHeld) return res.redirect(303, pendingUrl(board.slug));
   res.redirect(303, `${base}#p${postId}`);
 });
 
@@ -328,9 +339,122 @@ app.post("/:slug/delete", express.urlencoded({ extended: false }), (req, res, ne
 
 // --- Staff: login page / panel ---------------------------------------------
 app.get("/staff", (req, res) => {
+  // When signed in, show live pending counts per board for the queue links.
+  const queues = res.locals.isMod
+    ? Boards.all().map((b) => ({
+        slug: b.slug,
+        posts: Posts.pendingPosts(b.slug).length,
+        media: Posts.pendingMedia(b.slug).length,
+        links: Posts.pendingLinks(b.slug).length,
+      }))
+    : [];
   page(res, {
     title: "Staff — nojs.party",
-    body: view.staffPage({ isMod: res.locals.isMod, error: req.query.error }),
+    body: view.staffPage({
+      isMod: res.locals.isMod,
+      error: req.query.error,
+      settings: Settings.all(),
+      queues,
+      boards: res.locals.isMod ? Boards.all() : [],
+    }),
+  });
+});
+
+// --- Staff: board management (create / edit / delete) ----------------------
+// Slugs are lowercase alphanumeric, 1–16 chars, and must not collide with the
+// site's own top-level routes.
+const SLUG_RE = /^[a-z0-9]{1,16}$/;
+const RESERVED_SLUGS = new Set([
+  "staff",
+  "submitted",
+  "uploads",
+  "style.css",
+  "favicon.svg",
+]);
+const staffError = (msg) => "/staff?error=" + encodeURIComponent(msg);
+
+app.post("/staff/boards/create", form, (req, res) => {
+  if (!res.locals.isMod) return res.redirect(303, staffError("Staff only."));
+
+  const slug = String(req.body.slug || "").trim().toLowerCase();
+  const title = String(req.body.title || "").trim().slice(0, 60);
+  const description = String(req.body.description || "").trim().slice(0, 200);
+
+  if (!SLUG_RE.test(slug))
+    return res.redirect(303, staffError("Slug must be 1–16 lowercase letters/digits."));
+  if (RESERVED_SLUGS.has(slug))
+    return res.redirect(303, staffError(`"/${slug}/" is a reserved name.`));
+  if (Boards.get(slug))
+    return res.redirect(303, staffError(`Board /${slug}/ already exists.`));
+  if (!title) return res.redirect(303, staffError("Board title is required."));
+
+  Boards.create(slug, title, description);
+  res.redirect(303, "/staff");
+});
+
+app.post("/staff/boards/edit", form, (req, res) => {
+  if (!res.locals.isMod) return res.redirect(303, staffError("Staff only."));
+
+  const slug = String(req.body.slug || "").trim().toLowerCase();
+  const title = String(req.body.title || "").trim().slice(0, 60);
+  const description = String(req.body.description || "").trim().slice(0, 200);
+
+  if (!Boards.get(slug)) return res.redirect(303, staffError("No such board."));
+  if (!title) return res.redirect(303, staffError("Board title is required."));
+
+  Boards.update(slug, title, description);
+  res.redirect(303, "/staff");
+});
+
+app.post("/staff/boards/delete", form, (req, res) => {
+  if (!res.locals.isMod) return res.redirect(303, staffError("Staff only."));
+
+  const slug = String(req.body.slug || "").trim().toLowerCase();
+  const confirm = String(req.body.confirm || "").trim().toLowerCase();
+
+  if (!Boards.get(slug)) return res.redirect(303, staffError("No such board."));
+  // Require re-typing the slug — a no-JS guard against accidental deletion.
+  if (confirm !== slug)
+    return res.redirect(303, staffError(`Type "${slug}" to confirm deleting /${slug}/.`));
+
+  // Remove every uploaded file in the board before the rows cascade away.
+  for (const t of Threads.page(slug, 1e9, 0, true)) {
+    for (const p of Posts.forThread(t.id, true)) removeImage(p.image);
+  }
+  Boards.delete(slug);
+  res.redirect(303, "/staff");
+});
+
+// Toggle the three approval systems. Unchecked checkboxes are simply absent
+// from the POST body, which is exactly how we read each on/off state.
+app.post("/staff/settings", form, (req, res) => {
+  if (!res.locals.isMod)
+    return res.redirect(303, "/staff?error=" + encodeURIComponent("Staff only."));
+  Settings.set("ppa_enabled", req.body.ppa === "on");
+  Settings.set("mpa_enabled", req.body.mpa === "on");
+  Settings.set("lpa_enabled", req.body.lpa === "on");
+  res.redirect(303, "/staff");
+});
+
+// --- Staff: per-board moderation queue -------------------------------------
+app.get("/:slug/queue", (req, res, next) => {
+  const board = Boards.get(req.params.slug);
+  if (!board) return next();
+  if (!res.locals.isMod)
+    return res.redirect(303, "/staff?error=" + encodeURIComponent("Staff only."));
+
+  // Attach each OP's thread row so the queue can render pin/lock controls.
+  const withThread = (p) => (p.is_op ? { ...p, _thread: Threads.get(p.thread_id) } : p);
+
+  page(res, {
+    title: `/${board.slug}/ queue — nojs.party`,
+    board: board.slug,
+    body: view.queuePage({
+      board,
+      pendingPosts: Posts.pendingPosts(board.slug).map(withThread),
+      pendingMedia: Posts.pendingMedia(board.slug).map(withThread),
+      pendingLinks: Posts.pendingLinks(board.slug).map(withThread),
+    }),
   });
 });
 
@@ -362,37 +486,81 @@ app.post("/:slug/mod", form, (req, res, next) => {
     return res.redirect(303, `/${board.slug}/`);
   }
   const threadHome = `/${board.slug}/thread/${post.thread_id}`;
+  // Return the mod to wherever they clicked (queue, thread, or board).
+  const back = backTo(req, post.is_op && action === "delete" ? `/${board.slug}/` : threadHome);
 
   switch (action) {
     case "delete":
       if (post.is_op) {
-        for (const p of Posts.forThread(post.thread_id)) removeImage(p.image);
+        for (const p of Posts.forThread(post.thread_id, true)) removeImage(p.image);
         Threads.delete(post.thread_id);
-        return res.redirect(303, `/${board.slug}/`);
+        return res.redirect(303, backTo(req, `/${board.slug}/`));
       }
       removeImage(post.image);
       Posts.delete(post.id);
-      db.prepare(
-        "UPDATE threads SET reply_count = MAX(0, reply_count - 1), image_count = MAX(0, image_count - ?) WHERE id = ?"
-      ).run(post.image ? 1 : 0, post.thread_id);
-      return res.redirect(303, threadHome);
+      // Only decrement the public counters if this reply was actually counted
+      // (an approved reply). A still-pending reply never added to them.
+      if (post.approved) {
+        db.prepare(
+          "UPDATE threads SET reply_count = MAX(0, reply_count - 1), image_count = MAX(0, image_count - ?) WHERE id = ?"
+        ).run(post.image ? 1 : 0, post.thread_id);
+      }
+      return res.redirect(303, back);
+
+    // --- Approval actions (PPA / MPA / LPA) ---
+    case "approve": // PPA: reveal the whole post
+      if (!post.approved) {
+        Posts.approveField(post.id, "approved");
+        const now = Date.now();
+        if (post.is_op) {
+          Threads.approve(post.thread_id, now);
+          Threads.touchImageOnOp(post.thread_id, !!post.image);
+        } else {
+          revealReply(Threads.get(post.thread_id), now, !!post.image);
+        }
+      }
+      return res.redirect(303, back);
+    case "approve_media": // MPA: reveal the image
+      Posts.approveField(post.id, "media_approved");
+      return res.redirect(303, back);
+    case "approve_links": // LPA: make external links live
+      Posts.approveField(post.id, "links_approved");
+      return res.redirect(303, back);
 
     case "sticky":
       Threads.setFlag(post.thread_id, "sticky", 1);
-      return res.redirect(303, threadHome);
+      return res.redirect(303, back);
     case "unsticky":
       Threads.setFlag(post.thread_id, "sticky", 0);
-      return res.redirect(303, threadHome);
+      return res.redirect(303, back);
     case "lock":
       Threads.setFlag(post.thread_id, "locked", 1);
-      return res.redirect(303, threadHome);
+      return res.redirect(303, back);
     case "unlock":
       Threads.setFlag(post.thread_id, "locked", 0);
-      return res.redirect(303, threadHome);
+      return res.redirect(303, back);
 
     default:
-      return res.redirect(303, threadHome);
+      return res.redirect(303, back);
   }
+});
+
+// --- "Submitted, pending approval" confirmation ----------------------------
+// Shown after a post is held by PPA, since it won't appear publicly yet.
+app.get("/submitted", (req, res) => {
+  const slug = String(req.query.board || "");
+  const board = Boards.get(slug);
+  page(res, {
+    title: "Submitted — pending approval",
+    body: view.messagePage({
+      heading: "Submitted — pending approval",
+      message:
+        "Thanks! Your post was received and is now awaiting staff approval. " +
+        "It will appear once a moderator approves it.",
+      backHref: board ? `/${board.slug}/` : "/",
+      backLabel: board ? `Back to /${board.slug}/` : "Return home",
+    }),
+  });
 });
 
 // --- 404 --------------------------------------------------------------------
@@ -443,6 +611,54 @@ function cleanupUpload(file) {
 
 function removeImage(filename) {
   if (filename) unlink(join(UPLOAD_DIR, filename), () => {});
+}
+
+// Compute the three approval gates for a new post given the current settings.
+// `ppaHeld` is pulled out separately because it also governs thread visibility
+// and whether we defer bump/count until approval.
+function buildFlags(comment, hasImage) {
+  const s = Settings.all();
+  const linkPresent = hasLink(comment);
+  const ppaHeld = s.ppa;
+  return {
+    ppaHeld,
+    approved: ppaHeld ? 0 : 1,
+    media_approved: s.mpa && hasImage ? 0 : 1,
+    links_approved: s.lpa && linkPresent ? 0 : 1,
+    has_link: linkPresent ? 1 : 0,
+  };
+}
+
+function pendingUrl(slug) {
+  return `/submitted?board=${encodeURIComponent(slug)}`;
+}
+
+// Apply the public ranking/count effects of a reply becoming visible.
+function revealReply(thread, now, hasImage) {
+  if (thread.reply_count < BUMP_LIMIT) {
+    Threads.bump(thread.id, now, hasImage);
+  } else {
+    // Past the bump limit the thread stops rising, but we still count the reply.
+    db.prepare(
+      "UPDATE threads SET reply_count = reply_count + 1, image_count = image_count + ? WHERE id = ?"
+    ).run(hasImage ? 1 : 0, thread.id);
+  }
+}
+
+// Resolve a safe same-origin redirect target from the Referer header, so a mod
+// action returns the mod to the page they clicked from. Falls back when the
+// header is missing or points off-site (guards against open redirects).
+function backTo(req, fallback) {
+  const ref = req.get("referer");
+  if (!ref) return fallback;
+  try {
+    const base = `${req.protocol}://${req.get("host")}`;
+    const u = new URL(ref, base);
+    if (u.origin !== new URL(base).origin) return fallback;
+    return u.pathname + u.search + u.hash;
+  } catch {
+    return fallback;
+  }
 }
 
 app.listen(PORT, () => {

@@ -37,29 +37,57 @@ db.exec(`
     reply_count  INTEGER NOT NULL DEFAULT 0,
     image_count  INTEGER NOT NULL DEFAULT 0,
     sticky       INTEGER NOT NULL DEFAULT 0,
-    locked       INTEGER NOT NULL DEFAULT 0
+    locked       INTEGER NOT NULL DEFAULT 0,
+    approved     INTEGER NOT NULL DEFAULT 1   -- 0 = OP held by PPA, thread hidden
   );
 
   CREATE TABLE IF NOT EXISTS posts (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    thread_id   INTEGER NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
-    board       TEXT NOT NULL,
-    name        TEXT NOT NULL DEFAULT 'Anonymous',
-    tripcode    TEXT NOT NULL DEFAULT '',
-    comment     TEXT NOT NULL DEFAULT '',
-    image       TEXT NOT NULL DEFAULT '',      -- stored filename on disk
-    image_orig  TEXT NOT NULL DEFAULT '',      -- original upload name (for display)
-    image_w     INTEGER NOT NULL DEFAULT 0,
-    image_h     INTEGER NOT NULL DEFAULT 0,
-    image_size  INTEGER NOT NULL DEFAULT 0,
-    is_op       INTEGER NOT NULL DEFAULT 0,
-    del_hash    TEXT NOT NULL DEFAULT '',      -- hashed deletion password
-    created_at  INTEGER NOT NULL
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    thread_id      INTEGER NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+    board          TEXT NOT NULL,
+    name           TEXT NOT NULL DEFAULT 'Anonymous',
+    tripcode       TEXT NOT NULL DEFAULT '',
+    comment        TEXT NOT NULL DEFAULT '',
+    image          TEXT NOT NULL DEFAULT '',   -- stored filename on disk
+    image_orig     TEXT NOT NULL DEFAULT '',   -- original upload name (for display)
+    image_w        INTEGER NOT NULL DEFAULT 0,
+    image_h        INTEGER NOT NULL DEFAULT 0,
+    image_size     INTEGER NOT NULL DEFAULT 0,
+    is_op          INTEGER NOT NULL DEFAULT 0,
+    del_hash       TEXT NOT NULL DEFAULT '',   -- hashed deletion password
+    created_at     INTEGER NOT NULL,
+    approved       INTEGER NOT NULL DEFAULT 1, -- PPA: 0 = whole post hidden
+    media_approved INTEGER NOT NULL DEFAULT 1, -- MPA: 0 = image hidden
+    links_approved INTEGER NOT NULL DEFAULT 1, -- LPA: 0 = external links held
+    has_link       INTEGER NOT NULL DEFAULT 0  -- whether the comment has a URL
+  );
+
+  CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
   );
 
   CREATE INDEX IF NOT EXISTS idx_threads_board_bump ON threads(board, bumped_at DESC);
   CREATE INDEX IF NOT EXISTS idx_posts_thread ON posts(thread_id, id);
 `);
+
+// --- Lightweight migrations -------------------------------------------------
+// The CREATE TABLE statements above only run for a fresh DB (IF NOT EXISTS), so
+// an existing database created before these features needs its new columns
+// added explicitly. ADD COLUMN is idempotent here because we swallow the
+// "duplicate column name" error — the standard way to evolve SQLite in place.
+function addColumn(table, ddl) {
+  try {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+  } catch (e) {
+    if (!/duplicate column/i.test(e.message)) throw e;
+  }
+}
+addColumn("threads", "approved INTEGER NOT NULL DEFAULT 1");
+addColumn("posts", "approved INTEGER NOT NULL DEFAULT 1");
+addColumn("posts", "media_approved INTEGER NOT NULL DEFAULT 1");
+addColumn("posts", "links_approved INTEGER NOT NULL DEFAULT 1");
+addColumn("posts", "has_link INTEGER NOT NULL DEFAULT 0");
 
 // --- Seed default boards if the table is empty ------------------------------
 const boardCount = db.prepare("SELECT COUNT(*) AS n FROM boards").get().n;
@@ -73,37 +101,94 @@ if (boardCount === 0) {
   for (const row of defaults) seed.run(...row);
 }
 
+// --- Settings (key/value) ---------------------------------------------------
+// These drive the toggleable approval systems. Defaults: media & link approval
+// ON (every image / external link is held for review), post approval OFF (the
+// heavy gate that hides an entire post until a mod clears it).
+const SETTING_DEFAULTS = {
+  ppa_enabled: "0", // Post Pending Approval
+  mpa_enabled: "1", // Media Pending Approval
+  lpa_enabled: "1", // Link Pending Approval
+};
+{
+  const ins = db.prepare(
+    "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)"
+  );
+  for (const [k, v] of Object.entries(SETTING_DEFAULTS)) ins.run(k, v);
+}
+
+export const Settings = {
+  get(key) {
+    const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key);
+    return row ? row.value : SETTING_DEFAULTS[key] ?? null;
+  },
+  bool: (key) => Settings.get(key) === "1",
+  set(key, value) {
+    db.prepare(
+      `INSERT INTO settings (key, value) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+    ).run(key, value ? "1" : "0");
+  },
+  all() {
+    return {
+      ppa: Settings.bool("ppa_enabled"),
+      mpa: Settings.bool("mpa_enabled"),
+      lpa: Settings.bool("lpa_enabled"),
+    };
+  },
+};
+
 // --- Prepared statements / helpers ------------------------------------------
 
 export const Boards = {
   all: () => db.prepare("SELECT * FROM boards ORDER BY slug").all(),
   get: (slug) => db.prepare("SELECT * FROM boards WHERE slug = ?").get(slug),
+  create(slug, title, description) {
+    db.prepare(
+      "INSERT INTO boards (slug, title, description) VALUES (?, ?, ?)"
+    ).run(slug, title, description);
+  },
+  // Only title/description are editable — the slug is an immutable identity key
+  // (it is the primary key and appears in every thread/post row and URL).
+  update(slug, title, description) {
+    db.prepare(
+      "UPDATE boards SET title = ?, description = ? WHERE slug = ?"
+    ).run(title, description, slug);
+  },
+  // Deleting a board cascades to its threads and (via those) its posts.
+  delete: (slug) => db.prepare("DELETE FROM boards WHERE slug = ?").run(slug),
 };
 
 export const Threads = {
-  create(board, subject, now) {
+  create(board, subject, now, approved) {
     const info = db
       .prepare(
-        `INSERT INTO threads (board, subject, created_at, bumped_at)
-         VALUES (?, ?, ?, ?)`
+        `INSERT INTO threads (board, subject, created_at, bumped_at, approved)
+         VALUES (?, ?, ?, ?, ?)`
       )
-      .run(board, subject, now, now);
+      .run(board, subject, now, now, approved ? 1 : 0);
     return Number(info.lastInsertRowid);
   },
   get: (id) => db.prepare("SELECT * FROM threads WHERE id = ?").get(id),
-  // One page of threads for a board, newest-bumped first, stickies pinned on top.
-  page(board, limit, offset) {
+  // One page of threads for a board, newest-bumped first, stickies pinned on
+  // top. Public callers pass includePending=false to hide PPA-held threads.
+  page(board, limit, offset, includePending) {
+    const vis = includePending ? "" : "AND approved = 1";
     return db
       .prepare(
         `SELECT * FROM threads
-         WHERE board = ?
+         WHERE board = ? ${vis}
          ORDER BY sticky DESC, bumped_at DESC
          LIMIT ? OFFSET ?`
       )
       .all(board, limit, offset);
   },
-  count: (board) =>
-    db.prepare("SELECT COUNT(*) AS n FROM threads WHERE board = ?").get(board).n,
+  count(board, includePending) {
+    const vis = includePending ? "" : "AND approved = 1";
+    return db
+      .prepare(`SELECT COUNT(*) AS n FROM threads WHERE board = ? ${vis}`)
+      .get(board).n;
+  },
   bump(id, now, addedImage) {
     db.prepare(
       `UPDATE threads
@@ -116,6 +201,10 @@ export const Threads = {
   touchImageOnOp(id, addedImage) {
     if (addedImage)
       db.prepare("UPDATE threads SET image_count = image_count + 1 WHERE id = ?").run(id);
+  },
+  // Approve a held OP: reveal the thread and give it its first bump timestamp.
+  approve(id, now) {
+    db.prepare("UPDATE threads SET approved = 1, bumped_at = ? WHERE id = ?").run(now, id);
   },
   setFlag(id, field, value) {
     // field is validated by the caller against a whitelist.
@@ -130,30 +219,69 @@ export const Posts = {
       .prepare(
         `INSERT INTO posts
            (thread_id, board, name, tripcode, comment, image, image_orig,
-            image_w, image_h, image_size, is_op, del_hash, created_at)
+            image_w, image_h, image_size, is_op, del_hash, created_at,
+            approved, media_approved, links_approved, has_link)
          VALUES
            (@thread_id, @board, @name, @tripcode, @comment, @image, @image_orig,
-            @image_w, @image_h, @image_size, @is_op, @del_hash, @created_at)`
+            @image_w, @image_h, @image_size, @is_op, @del_hash, @created_at,
+            @approved, @media_approved, @links_approved, @has_link)`
       )
       .run(p);
     return Number(info.lastInsertRowid);
   },
   get: (id) => db.prepare("SELECT * FROM posts WHERE id = ?").get(id),
-  forThread: (threadId) =>
-    db.prepare("SELECT * FROM posts WHERE thread_id = ? ORDER BY id ASC").all(threadId),
-  // The OP plus the last N replies — used for board index previews.
-  previewReplies(threadId, n) {
+  forThread(threadId, includePending) {
+    // The OP is always returned (its visibility is governed by the thread); for
+    // public callers we additionally hide PPA-held replies.
+    const vis = includePending ? "" : "AND (is_op = 1 OR approved = 1)";
+    return db
+      .prepare(`SELECT * FROM posts WHERE thread_id = ? ${vis} ORDER BY id ASC`)
+      .all(threadId);
+  },
+  // The OP plus the last N visible replies — used for board index previews.
+  previewReplies(threadId, n, includePending) {
+    const vis = includePending ? "" : "AND approved = 1";
     const rows = db
       .prepare(
         `SELECT * FROM posts
-         WHERE thread_id = ? AND is_op = 0
+         WHERE thread_id = ? AND is_op = 0 ${vis}
          ORDER BY id DESC LIMIT ?`
       )
       .all(threadId, n);
     return rows.reverse();
   },
+  // Count of visible replies for a thread (for accurate public counts).
+  visibleReplyCount: (threadId) =>
+    db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM posts WHERE thread_id = ? AND is_op = 0 AND approved = 1"
+      )
+      .get(threadId).n,
   op: (threadId) =>
     db.prepare("SELECT * FROM posts WHERE thread_id = ? AND is_op = 1").get(threadId),
+  // Approve one aspect of a post. `field` is whitelisted by the caller.
+  approveField(id, field) {
+    db.prepare(`UPDATE posts SET ${field} = 1 WHERE id = ?`).run(id);
+  },
+  // Moderation queues.
+  pendingPosts: (board) =>
+    db
+      .prepare(
+        "SELECT * FROM posts WHERE board = ? AND approved = 0 ORDER BY id ASC"
+      )
+      .all(board),
+  pendingMedia: (board) =>
+    db
+      .prepare(
+        "SELECT * FROM posts WHERE board = ? AND image <> '' AND media_approved = 0 ORDER BY id ASC"
+      )
+      .all(board),
+  pendingLinks: (board) =>
+    db
+      .prepare(
+        "SELECT * FROM posts WHERE board = ? AND has_link = 1 AND links_approved = 0 ORDER BY id ASC"
+      )
+      .all(board),
   delete: (id) => db.prepare("DELETE FROM posts WHERE id = ?").run(id),
 };
 

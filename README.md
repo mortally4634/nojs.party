@@ -2,21 +2,46 @@
 
 An imageboard that is **completely usable with JavaScript disabled**. Every
 action — browsing boards, creating threads, replying, uploading images,
-paginating, and deleting your own posts — works through plain HTML forms and
+paginating, moderating, and managing boards — works through plain HTML forms and
 links with full server-side rendering. There is not a single line of
 client-side JavaScript, and a `Content-Security-Policy` of `script-src 'none'`
 enforces it.
 
 ## Features
 
-- **Multiple boards** (seeded: `/b/`, `/tech/`, `/art/`, `/meta/`)
 - **Anonymous posting** with optional names and `name#secret` **tripcodes**
-- **Threads and replies** with **image uploads** (PNG / JPEG / GIF / WebP, 5 MB)
+- **Threads and replies** with **image uploads** (PNG / JPEG / GIF / WebP, 5 MB).
+  An image is **required** to start a thread.
 - **Greentext** (`>text`) and **post quote links** (`>>123`)
 - **Bump ordering** with a configurable bump limit, stickies, and locks
 - **Delete-with-password** per post (OP deletion removes the whole thread)
 - **Pagination**, **dark mode** (follows your OS), and a mobile layout
 - Collapsible forms via native `<details>` — no JS even for that
+
+### Staff / moderation
+
+Staff log in at **`/staff`** (default credentials `admin` / `admin`). A signed,
+`HttpOnly` session cookie keeps them logged in — so moderation works without
+JavaScript too. The staff panel provides:
+
+- **Board management** — create, edit (title/description), and delete boards.
+  Slugs are `1–16` lowercase alphanumerics, validated and reserved-name-checked;
+  a slug is permanent once created. Deleting requires re-typing the slug.
+- **Inline controls** — delete any post (no password), pin/unpin, lock/unlock.
+- **Three toggleable approval gates**, each holding only *new* content created
+  while it is on:
+  - **PPA** — Post Pending Approval: the whole post is hidden until a mod clears
+    it. Held posts don't bump or count until approved. *(default: off)*
+  - **MPA** — Media Pending Approval: uploaded images are held; the public sees a
+    placeholder, staff see the real image. *(default: on)*
+  - **LPA** — Link Pending Approval: external `http(s)` links are held; the
+    public sees a placeholder. Internal `>>123` quotes are never gated.
+    *(default: on)*
+- **Per-board moderation queue** at `/<board>/queue` listing everything pending,
+  with one-click approve / delete.
+
+Override the defaults with env vars: `MOD_USER`, `MOD_PASS`, and `SESSION_SECRET`
+(set a stable secret in production so sessions survive restarts).
 
 ## Tech
 
@@ -35,13 +60,15 @@ Set a different port with `PORT=8080 npm start`.
 
 ## Layout
 
-| File           | Responsibility                                  |
-| -------------- | ----------------------------------------------- |
-| `server.js`    | HTTP routes, uploads, Post/Redirect/Get flow    |
-| `db.js`        | SQLite schema + query helpers (seeds boards)    |
-| `render.js`    | Server-side HTML templates                      |
-| `util.js`      | HTML escaping, comment formatting, tripcodes    |
-| `imagesize.js` | Pure-JS image header parser                     |
-| `public/`      | `style.css`, `favicon.svg`                      |
+| File           | Responsibility                                      |
+| -------------- | --------------------------------------------------- |
+| `server.js`    | HTTP routes, uploads, approval gating, Post/Redirect/Get |
+| `db.js`        | SQLite schema, migrations, settings & query helpers |
+| `render.js`    | Server-side HTML templates                          |
+| `util.js`      | HTML escaping, comment formatting, tripcodes, links |
+| `auth.js`      | Staff credentials + signed session cookies          |
+| `imagesize.js` | Pure-JS image header parser                         |
+| `public/`      | `style.css`, `favicon.svg`                          |
 
 Data persists in `data/` (SQLite) and uploads in `uploads/` — both gitignored.
+Boards are seeded with a single board, `/js/`, on first run.

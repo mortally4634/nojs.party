@@ -250,6 +250,74 @@ input[type="submit"]:hover { filter: brightness(0.96); }
 .staff-howto { font-size: 14px; color: var(--text); line-height: 1.6; }
 .staff-howto strong { color: var(--accent); }
 
+/* --- Approval systems (PPA / MPA / LPA) ---------------------------------- */
+.req { color: var(--accent); }
+
+/* Settings toggle form on the staff panel */
+.settings-form .toggle {
+  display: block; padding: 6px 8px; margin: 4px 0;
+  background: var(--panel); border: 1px solid var(--panel-border); border-radius: 3px;
+  font-size: 14px; cursor: pointer;
+}
+.settings-form .toggle input { margin-right: 8px; }
+.settings-form .toggle strong { color: var(--accent); }
+.settings-form input[type="submit"] { margin-top: 8px; }
+.queue-links a { font-weight: bold; }
+.qbreak { color: var(--muted); font-size: 12px; }
+
+/* Placeholders shown to the public for held content */
+.media-pending {
+  display: inline-block; padding: 16px 18px; margin: 2px 0;
+  background: repeating-linear-gradient(45deg, var(--panel), var(--panel) 8px, var(--panel-border) 8px, var(--panel-border) 16px);
+  border: 1px dashed var(--muted); color: var(--muted); font-size: 12px;
+  font-style: italic; border-radius: 3px;
+}
+.link-pending {
+  background: var(--panel); border: 1px dashed var(--muted); color: var(--muted);
+  font-size: 12px; padding: 0 4px; border-radius: 3px; font-style: italic;
+}
+
+/* Mod-only status indicators */
+.pending-badge {
+  font-size: 11px; font-weight: bold; padding: 1px 6px; border-radius: 8px;
+  margin: 0 2px; color: #fff; text-transform: uppercase; letter-spacing: 0.3px;
+}
+.pending-badge.ppa { background: #b4532a; }
+.pending-badge.mpa { background: #7a4dbd; }
+.pending-badge.lpa { background: #2a6fb4; }
+.pending-tag { color: var(--muted); font-size: 11px; font-style: italic; }
+.post.is-pending { outline: 2px dashed #b4532a; outline-offset: -2px; }
+.thumb.held { filter: saturate(0.3) brightness(0.8); }
+
+.mod-form.approve input[type="submit"] { background: #2e7d32; border-color: #2e7d32; }
+.mod-form.approve input[type="submit"]:hover { filter: brightness(1.1); }
+
+/* Board management on the staff panel */
+.board-create, .board-edit, .board-delete {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0;
+}
+.board-create input[type="text"], .board-edit input[type="text"], .board-delete input[type="text"] {
+  padding: 4px 6px; border: 1px solid var(--panel-border);
+  background: var(--bg); color: var(--text); font-size: 14px;
+}
+.board-create input[name="slug"] { width: 90px; }
+.board-create input[name="title"], .board-edit input[name="title"] { width: 160px; }
+.board-create input[name="description"], .board-edit input[name="description"] { flex: 1; min-width: 160px; }
+.slug-prefix { color: var(--muted); font-weight: bold; }
+.board-admin {
+  background: var(--panel); border: 1px solid var(--panel-border);
+  border-radius: 3px; padding: 8px; margin: 6px 0;
+}
+.board-admin-slug { font-weight: bold; color: var(--accent); min-width: 54px; }
+.board-delete input[name="confirm"] { width: 170px; }
+input[type="submit"].danger { background: #b03030; color: #fff; border-color: #b03030; }
+input[type="submit"].danger:hover { filter: brightness(1.1); }
+
+/* Queue page */
+.queue-section { margin: 10px 0; }
+.queue-section h3 { color: var(--accent); margin-bottom: 2px; }
+.qcount { color: var(--muted); font-weight: normal; font-size: 14px; }
+
 /* --- Pagination ---------------------------------------------------------- */
 .pager { margin: 16px 0; text-align: center; }
 .pager .pg {

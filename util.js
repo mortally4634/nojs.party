@@ -82,10 +82,20 @@ export function hashDeletePassword(pw) {
 // Because step 1 already neutralized every angle bracket, the regexes in later
 // steps operate on the escaped forms (e.g. ">" is "&gt;"), so user text can
 // never inject a real tag.
-export function renderComment(raw, { board, threadId } = {}) {
+// Single source of truth for what counts as an external link.
+export const URL_RE = /\bhttps?:\/\/[^\s<]+/;
+
+// Does a comment contain at least one external URL? Used to decide whether the
+// Link-Pending-Approval gate applies to a post at creation time.
+export function hasLink(raw) {
+  return new RegExp(URL_RE).test(String(raw || ""));
+}
+
+export function renderComment(raw, { board, threadId, holdLinks } = {}) {
   let html = escapeHtml(raw || "");
 
-  // Post references: >>123  (escaped as &gt;&gt;123)
+  // Post references: >>123  (escaped as &gt;&gt;123). These are internal
+  // navigation, NOT external links, so LPA never holds them.
   html = html.replace(/(&gt;&gt;)(\d+)/g, (m, _arrows, num) => {
     const href =
       board && threadId
@@ -94,12 +104,23 @@ export function renderComment(raw, { board, threadId } = {}) {
     return `<a class="quotelink" href="${href}">&gt;&gt;${num}</a>`;
   });
 
-  // Autolink URLs. We match the escaped text, so "&" in querystrings appears as
+  // External URLs. When this post's links are held (LPA), we do NOT emit a
+  // clickable anchor at all — the URL is replaced by an inert placeholder, so a
+  // no-JS visitor cannot reach or even read the pending link. When approved, we
+  // autolink as usual. We match the escaped text, so "&" in querystrings is
   // "&amp;" — fine, the browser decodes it back in the href.
-  html = html.replace(
-    /\bhttps?:\/\/[^\s<]+/g,
-    (url) => `<a href="${url}" rel="noopener noreferrer nofollow">${url}</a>`
-  );
+  const urlRe = new RegExp(URL_RE.source, "g");
+  if (holdLinks) {
+    html = html.replace(
+      urlRe,
+      () => `<span class="link-pending">[external link pending approval]</span>`
+    );
+  } else {
+    html = html.replace(
+      urlRe,
+      (url) => `<a href="${url}" rel="noopener noreferrer nofollow">${url}</a>`
+    );
+  }
 
   // Greentext: any line starting with ">" (but not a ">>" quotelink we already
   // wrapped). Process per line.

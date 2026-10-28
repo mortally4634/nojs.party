@@ -104,10 +104,10 @@ export function postForm({ action, isThread, locked }) {
         <td><textarea id="comment" name="comment" rows="5" maxlength="8000" required placeholder="Use &gt;text for greentext and &gt;&gt;123 to quote a post."></textarea></td>
       </tr>
       <tr>
-        <th><label for="image">Image</label></th>
+        <th><label for="image">Image${isThread ? " <span class=\"req\">*</span>" : ""}</label></th>
         <td>
-          <input type="file" id="image" name="image" accept="image/png,image/jpeg,image/gif,image/webp">
-          <span class="hint">PNG, JPEG, GIF or WebP, up to 5 MB${isThread ? "" : " (optional)"}.</span>
+          <input type="file" id="image" name="image" accept="image/png,image/jpeg,image/gif,image/webp"${isThread ? " required" : ""}>
+          <span class="hint">PNG, JPEG, GIF or WebP, up to 5 MB${isThread ? " — required to start a thread." : " (optional)."}</span>
         </td>
       </tr>
       <tr>
@@ -128,51 +128,86 @@ export function renderPost(post, { board, threadId, showReplyLink, isMod, thread
   const trip = post.tripcode
     ? `<span class="trip">!${escapeHtml(post.tripcode)}</span>`
     : "";
-  const comment = renderComment(post.comment, { board, threadId });
 
+  // Pending states. Public viewers never see a post held by PPA (the queries
+  // exclude it), so a rendered-but-unapproved post only ever reaches a mod.
+  const postPending = !post.approved;
+  const mediaPending = !!post.image && !post.media_approved;
+  const linksPending = !!post.has_link && !post.links_approved;
+
+  // Links: hold them from the public, but let a trusted mod see the real URL so
+  // they can judge it in context before approving.
+  const comment = renderComment(post.comment, {
+    board,
+    threadId,
+    holdLinks: linksPending && !isMod,
+  });
+
+  // Media: the public sees a placeholder; a mod sees the actual image (marked
+  // pending) so they can review it. Once approved, everyone sees it.
   let fileBlock = "";
   if (post.image) {
-    const dims = post.image_w ? `${post.image_w}×${post.image_h}, ` : "";
-    fileBlock = `
+    if (mediaPending && !isMod) {
+      fileBlock = `<div class="file"><div class="media-pending">[ media pending approval ]</div></div>`;
+    } else {
+      const dims = post.image_w ? `${post.image_w}×${post.image_h}, ` : "";
+      const pendNote = mediaPending
+        ? ` <span class="pending-tag">media pending</span>`
+        : "";
+      fileBlock = `
       <div class="file">
         <span class="file-info">File:
           <a href="/uploads/${escapeHtml(post.image)}" rel="noopener">${escapeHtml(post.image_orig || post.image)}</a>
-          (${dims}${humanSize(post.image_size)})
+          (${dims}${humanSize(post.image_size)})${pendNote}
         </span>
         <a class="thumb-link" href="/uploads/${escapeHtml(post.image)}">
-          <img class="thumb" src="/uploads/${escapeHtml(post.image)}" alt="post image" loading="lazy">
+          <img class="thumb${mediaPending ? " held" : ""}" src="/uploads/${escapeHtml(post.image)}" alt="post image" loading="lazy">
         </a>
       </div>`;
+    }
   }
 
   const replyLink = showReplyLink
     ? ` <a class="replylink" href="/${board}/thread/${threadId}#p${post.id}">No.${post.id}</a>`
     : ` <span class="postno">No.${post.id}</span>`;
 
+  // Badges that explain a post's pending status (shown to mods, who are the
+  // only ones who can see partially-held posts in full).
+  const statusBadges = isMod
+    ? (postPending ? '<span class="pending-badge ppa">PPA · post pending</span>' : "") +
+      (mediaPending ? '<span class="pending-badge mpa">MPA · media pending</span>' : "") +
+      (linksPending ? '<span class="pending-badge lpa">LPA · link pending</span>' : "")
+    : "";
+
   // Staff get no-password moderation controls; everyone gets the password box.
   let modControls = "";
   if (isMod) {
-    const act = (action, label) =>
-      `<form class="mod-form" action="/${board}/mod" method="post">
+    const act = (action, label, cls = "") =>
+      `<form class="mod-form ${cls}" action="/${board}/mod" method="post">
          <input type="hidden" name="action" value="${action}">
          <input type="hidden" name="post_id" value="${post.id}">
          <input type="submit" value="${label}">
        </form>`;
+    const approvals =
+      (postPending ? act("approve", "✓ post", "approve") : "") +
+      (mediaPending ? act("approve_media", "✓ media", "approve") : "") +
+      (linksPending ? act("approve_links", "✓ link", "approve") : "");
     const threadActions =
       post.is_op && thread
         ? act(thread.sticky ? "unsticky" : "sticky", thread.sticky ? "unpin" : "pin") +
           act(thread.locked ? "unlock" : "lock", thread.locked ? "unlock" : "lock")
         : "";
-    modControls = `<span class="mod-controls">${act("delete", "del")}${threadActions}</span>`;
+    modControls = `<span class="mod-controls">${approvals}${act("delete", "del")}${threadActions}</span>`;
   }
 
   return `
-  <div class="post ${post.is_op ? "op" : "reply"}" id="p${post.id}">
+  <div class="post ${post.is_op ? "op" : "reply"}${postPending ? " is-pending" : ""}" id="p${post.id}">
     <div class="post-head">
       ${post.is_op && post.subject ? `<span class="subject">${escapeHtml(post.subject)}</span> ` : ""}
       <span class="name">${name}</span>${trip}
       <span class="date">${formatDate(post.created_at)}</span>
       ${replyLink}
+      ${statusBadges}
       <details class="delbox">
         <summary>×</summary>
         <form class="del-form" action="/${board}/delete" method="post">
@@ -314,19 +349,86 @@ function renderPager(base, page, pageCount) {
 
 // --- Staff login / panel ----------------------------------------------------
 
-export function staffPage({ isMod, error }) {
+export function staffPage({ isMod, error, settings, queues, boards }) {
   if (isMod) {
+    const chk = (on) => (on ? " checked" : "");
+    const errBanner = error ? `<p class="error">${escapeHtml(error)}</p>` : "";
+
+    // One edit + delete form per existing board. Slug is shown read-only; delete
+    // requires re-typing the slug as a no-JS confirmation guard.
+    const boardRows = (boards || [])
+      .map(
+        (b) => `
+      <div class="board-admin">
+        <form class="post-form board-edit" action="/staff/boards/edit" method="post">
+          <input type="hidden" name="slug" value="${escapeHtml(b.slug)}">
+          <span class="board-admin-slug">/${escapeHtml(b.slug)}/</span>
+          <input type="text" name="title" value="${escapeHtml(b.title)}" maxlength="60" required>
+          <input type="text" name="description" value="${escapeHtml(b.description)}" maxlength="200" placeholder="description">
+          <input type="submit" value="Save">
+        </form>
+        <form class="post-form board-delete" action="/staff/boards/delete" method="post">
+          <input type="hidden" name="slug" value="${escapeHtml(b.slug)}">
+          <input type="text" name="confirm" placeholder="type ${escapeHtml(b.slug)} to delete" maxlength="16">
+          <input type="submit" value="Delete board" class="danger">
+        </form>
+      </div>`
+      )
+      .join("");
+    const queueRows = (queues || [])
+      .map((q) => {
+        const total = q.posts + q.media + q.links;
+        return `<li>
+          <a href="/${escapeHtml(q.slug)}/queue">/${escapeHtml(q.slug)}/ queue</a>
+          — ${total} pending
+          <span class="qbreak">(${q.posts} posts, ${q.media} media, ${q.links} links)</span>
+        </li>`;
+      })
+      .join("");
+
     return `
     <section class="message-page">
       <h2>Staff Panel</h2>
-      <p>You are signed in as staff. Moderation controls (del / pin / lock) now
-      appear on every post and thread.</p>
+      ${errBanner}
+
+      <h3>Boards</h3>
+      <p>Create a new board or edit an existing one's title and description.
+      A board's slug is permanent once created.</p>
+      <form class="post-form board-create" action="/staff/boards/create" method="post">
+        <span class="slug-prefix">/</span>
+        <input type="text" name="slug" placeholder="slug" pattern="[a-z0-9]{1,16}" maxlength="16" required
+               title="lowercase letters and digits, 1–16 characters">
+        <span class="slug-prefix">/</span>
+        <input type="text" name="title" placeholder="Board title" maxlength="60" required>
+        <input type="text" name="description" placeholder="Short description" maxlength="200">
+        <input type="submit" value="Create board">
+      </form>
+      <div class="board-admin-list">${boardRows}</div>
+
+      <h3>Approval systems</h3>
+      <p>Toggle the three review gates. A gate only holds new content created
+      while it is on; already-approved content is unaffected.</p>
+      <form class="post-form settings-form" action="/staff/settings" method="post">
+        <label class="toggle"><input type="checkbox" name="ppa"${chk(settings.ppa)}>
+          <strong>PPA</strong> — Post Pending Approval: hide every new post until a mod clears it.</label>
+        <label class="toggle"><input type="checkbox" name="mpa"${chk(settings.mpa)}>
+          <strong>MPA</strong> — Media Pending Approval: hide every uploaded image until a mod clears it.</label>
+        <label class="toggle"><input type="checkbox" name="lpa"${chk(settings.lpa)}>
+          <strong>LPA</strong> — Link Pending Approval: hold every external link until a mod clears it.</label>
+        <input type="submit" value="Save settings">
+      </form>
+
+      <h3>Moderation queue</h3>
+      <ul class="staff-howto queue-links">${queueRows || "<li>No boards.</li>"}</ul>
+
+      <h3>Inline controls</h3>
       <ul class="staff-howto">
+        <li><strong>✓ post / ✓ media / ✓ link</strong> — approve a held post, image, or link.</li>
         <li><strong>del</strong> — remove any post without its delete password
         (removing an OP deletes the whole thread).</li>
-        <li><strong>pin / unpin</strong> — stick a thread to the top of the board.</li>
-        <li><strong>lock / unlock</strong> — stop or allow new replies.</li>
+        <li><strong>pin / unpin</strong>, <strong>lock / unlock</strong> — manage threads.</li>
       </ul>
+
       <form class="post-form" action="/staff/logout" method="post">
         <input type="submit" value="Log out">
       </form>
@@ -346,6 +448,47 @@ export function staffPage({ isMod, error }) {
       </table>
     </form>
   </section>`;
+}
+
+// --- Moderation queue -------------------------------------------------------
+
+export function queuePage({ board, pendingPosts, pendingMedia, pendingLinks }) {
+  // Each queued item reuses renderPost in mod mode, so the approve/delete
+  // controls and the real (held) media/links are all visible for review.
+  const section = (title, hint, rows) => {
+    const body =
+      rows.length === 0
+        ? `<p class="empty">Nothing pending.</p>`
+        : rows
+            .map((p) =>
+              renderPost(p, {
+                board: board.slug,
+                threadId: p.thread_id,
+                showReplyLink: true,
+                isMod: true,
+                thread: p.is_op ? p._thread : undefined,
+              })
+            )
+            .join('<hr class="thread-sep">');
+    return `
+      <section class="queue-section">
+        <h3>${escapeHtml(title)} <span class="qcount">(${rows.length})</span></h3>
+        <p class="board-desc">${escapeHtml(hint)}</p>
+        ${body}
+      </section>`;
+  };
+
+  return `
+  <section class="board-head">
+    <h2>/${escapeHtml(board.slug)}/ &mdash; moderation queue</h2>
+    <p class="thread-meta"><a class="back" href="/staff">[Staff panel]</a>
+      <a class="back" href="/${board.slug}/">[Board]</a></p>
+  </section>
+  ${section("Posts pending (PPA)", "Entire posts hidden from the public until approved.", pendingPosts)}
+  <hr class="thread-sep">
+  ${section("Media pending (MPA)", "Posts whose image is held. The public sees a placeholder.", pendingMedia)}
+  <hr class="thread-sep">
+  ${section("Links pending (LPA)", "Posts with an external link held from the public.", pendingLinks)}`;
 }
 
 export function messagePage({ heading, message, backHref, backLabel }) {
