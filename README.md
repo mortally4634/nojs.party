@@ -1,5 +1,7 @@
 # nojs.party
 
+**Free and open-source imageboard software.** Licensed under the MIT License.
+
 An imageboard that is **completely usable with JavaScript disabled**. Every
 action — browsing boards, creating threads, replying, uploading images,
 paginating, moderating, and managing boards — works through plain HTML forms and
@@ -58,6 +60,29 @@ npm start          # listens on http://localhost:7002
 
 Set a different port with `PORT=8080 npm start`.
 
+## Configuration & default settings
+
+A **fresh install ships with this moderation posture** (the staff panel can
+change it per-instance afterwards):
+
+| Gate | Default | Meaning |
+| ---- | ------- | ------- |
+| **PPA** (Post Pending Approval)  | **off** | posts appear immediately |
+| **MPA** (Media Pending Approval) | **on**  | every uploaded image is held for review |
+| **LPA** (Link Pending Approval)  | **on**  | every external link is held for review |
+
+These defaults are seeded only on first run. Operators packaging or deploying
+the software can override the initial posture at launch — no source edits
+needed — via environment variables:
+
+| Variable | Default | Purpose |
+| -------- | ------- | ------- |
+| `PORT` | `7002` | HTTP port |
+| `DATA_DIR` | `./data` | where the SQLite database lives |
+| `DEFAULT_PPA` / `DEFAULT_MPA` / `DEFAULT_LPA` | `0` / `1` / `1` | initial state of each approval gate (`1`/`0`, `true`/`false`, `on`/`off`) |
+| `MOD_USER` / `MOD_PASS` | `admin` / `admin` | staff credentials |
+| `SESSION_SECRET` | random per start | signs staff session cookies (set a stable value in production) |
+
 ## Layout
 
 | File           | Responsibility                                      |
@@ -72,3 +97,8 @@ Set a different port with `PORT=8080 npm start`.
 
 Data persists in `data/` (SQLite) and uploads in `uploads/` — both gitignored.
 Boards are seeded with a single board, `/js/`, on first run.
+
+## License
+
+nojs.party is open-source imageboard software released under the
+[MIT License](LICENSE) — free to use, modify, and distribute.

@@ -1,7 +1,22 @@
 {
   "name": "nojs-party",
   "version": "1.0.0",
-  "description": "A fully functional imageboard that works with JavaScript completely disabled.",
+  "description": "Free and open-source imageboard software that is fully usable with JavaScript disabled.",
+  "keywords": [
+    "imageboard",
+    "open-source",
+    "no-javascript",
+    "nojs",
+    "textboard",
+    "forum",
+    "express"
+  ],
+  "homepage": "https://github.com/mortally4634/nojs.party",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mortally4634/nojs.party.git"
+  },
+  "license": "MIT",
   "type": "module",
   "main": "server.js",
   "scripts": {

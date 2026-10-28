@@ -12,7 +12,14 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = join(__dirname, "data");
+// The data directory is configurable so operators who deploy this software can
+// put the database wherever they like (e.g. a mounted volume). Defaults to
+// ./data next to the code.
+const DATA_DIR = process.env.DATA_DIR
+  ? (process.env.DATA_DIR.match(/^([a-zA-Z]:[\\/]|[\\/])/) // absolute?
+      ? process.env.DATA_DIR
+      : join(__dirname, process.env.DATA_DIR))
+  : join(__dirname, "data");
 mkdirSync(DATA_DIR, { recursive: true });
 
 const db = new DatabaseSync(join(DATA_DIR, "nojs.db"));
@@ -102,13 +109,28 @@ if (boardCount === 0) {
 }
 
 // --- Settings (key/value) ---------------------------------------------------
-// These drive the toggleable approval systems. Defaults: media & link approval
-// ON (every image / external link is held for review), post approval OFF (the
-// heavy gate that hides an entire post until a mod clears it).
+// Distribution defaults for the three approval gates — the moderation posture a
+// FRESH install ships with:
+//
+//   PPA (post approval)  OFF — posts appear immediately.
+//   MPA (media approval)  ON — every uploaded image is held for review.
+//   LPA (link approval)   ON — every external link is held for review.
+//
+// These are seeded only when the settings table is empty (INSERT OR IGNORE), so
+// they set the INITIAL state; after that the staff panel is the source of truth
+// and toggling there does not change what a fresh install gets. Operators who
+// package/deploy the software can override the initial posture at launch with
+// the DEFAULT_PPA / DEFAULT_MPA / DEFAULT_LPA env vars (1/0, true/false, on/off)
+// without editing this file; unset means the defaults above.
+const envDefault = (name, fallback) => {
+  const v = process.env[name];
+  if (v === undefined || v === "") return fallback;
+  return /^(1|true|on|yes)$/i.test(v.trim()) ? "1" : "0";
+};
 const SETTING_DEFAULTS = {
-  ppa_enabled: "0", // Post Pending Approval
-  mpa_enabled: "1", // Media Pending Approval
-  lpa_enabled: "1", // Link Pending Approval
+  ppa_enabled: envDefault("DEFAULT_PPA", "0"), // Post Pending Approval
+  mpa_enabled: envDefault("DEFAULT_MPA", "1"), // Media Pending Approval
+  lpa_enabled: envDefault("DEFAULT_LPA", "1"), // Link Pending Approval
 };
 {
   const ins = db.prepare(

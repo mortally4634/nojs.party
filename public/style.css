@@ -98,6 +98,13 @@ footer {
 /* --- Home ---------------------------------------------------------------- */
 .intro { background: var(--panel); border: 1px solid var(--panel-border); padding: 12px 16px; border-radius: 4px; }
 .intro h2 { margin-top: 0; color: var(--accent); }
+.os-badge {
+  display: inline-block; margin: 0 0 8px; padding: 2px 10px;
+  background: var(--accent); color: #fff; font-size: 12px; font-weight: bold;
+  border-radius: 10px; text-transform: uppercase; letter-spacing: 0.4px;
+}
+.foot-links { margin-top: 4px; }
+.foot-links a { color: var(--link); }
 .intro .stat { color: var(--muted); font-size: 13px; }
 
 .board-list {
@@ -151,6 +158,10 @@ details[open] > summary { margin-bottom: 8px; }
 }
 .form-table textarea { max-width: 100%; resize: vertical; }
 .hint { color: var(--muted); font-size: 12px; margin-left: 6px; }
+.captcha-img {
+  display: block; margin-bottom: 6px; border: 1px solid var(--panel-border);
+  border-radius: 3px; background: #f2efe6;
+}
 input[type="submit"] {
   background: var(--nav-bg); border: 1px solid var(--panel-border);
   padding: 4px 14px; cursor: pointer; font-weight: bold; color: var(--text);

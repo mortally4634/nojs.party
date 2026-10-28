@@ -37,14 +37,18 @@ export function layout({ title, boards, body, board, isMod }) {
 <nav class="boardbar">[ ${boardLinks} ] ${staffLink} <a class="home" href="/">home</a></nav>
 <header class="masthead">
   <a href="/"><h1>nojs.party</h1></a>
-  <p class="tagline">an imageboard that needs no javascript whatsoever</p>
 </header>
 <main>
 ${body}
 </main>
 <footer>
-  <p>nojs.party &mdash; runs entirely on HTML forms and server-side rendering.
-  Disable JavaScript and everything still works.</p>
+  <p><strong>nojs.party</strong> is free, open-source imageboard software &mdash;
+  it runs entirely on HTML forms and server-side rendering, so you can disable
+  JavaScript and everything still works.</p>
+  <p class="foot-links">
+    <a href="https://github.com/mortally4634/nojs.party" rel="noopener noreferrer">Source code</a>
+    &middot; MIT licensed
+  </p>
 </footer>
 </body>
 </html>`;
@@ -69,6 +73,7 @@ export function homePage(boards, stats) {
   return `
   <section class="intro">
     <h2>Welcome</h2>
+    <p class="os-badge">Free &amp; open-source imageboard software</p>
     <p>This is a classic textboard/imageboard. Post anonymously, reply to
     threads, and upload images &mdash; all without a single line of client-side
     JavaScript. Pick a board to get started.</p>
@@ -79,10 +84,28 @@ export function homePage(boards, stats) {
 
 // --- Post form (shared by new-thread and reply) -----------------------------
 
-export function postForm({ action, isThread, locked }) {
+export function postForm({ action, isThread, locked, captchaToken }) {
   if (locked) {
     return `<div class="locked-note">🔒 This thread is locked. No new replies.</div>`;
   }
+  // A CAPTCHA is required to start a thread (not to reply). It is an SVG image
+  // served from our own origin plus a hidden token identifying the challenge.
+  const captchaRow =
+    isThread && captchaToken
+      ? `
+      <tr>
+        <th><label for="captcha">CAPTCHA <span class="req">*</span></label></th>
+        <td>
+          <img class="captcha-img" src="/captcha/${captchaToken}" width="190" height="60"
+               alt="Type the characters shown in this image">
+          <input type="hidden" name="captcha_token" value="${captchaToken}">
+          <input type="text" id="captcha" name="captcha" maxlength="8" required
+                 autocomplete="off" autocapitalize="characters" spellcheck="false"
+                 placeholder="type the characters above">
+          <span class="hint">Case-insensitive. Reload the page for a new image.</span>
+        </td>
+      </tr>`
+      : "";
   return `
   <form class="post-form" action="${action}" method="post" enctype="multipart/form-data">
     <table class="form-table">
@@ -110,6 +133,7 @@ export function postForm({ action, isThread, locked }) {
           <span class="hint">PNG, JPEG, GIF or WebP, up to 5 MB${isThread ? " — required to start a thread." : " (optional)."}</span>
         </td>
       </tr>
+      ${captchaRow}
       <tr>
         <th><label for="delpw">Delete password</label></th>
         <td>
@@ -225,7 +249,7 @@ export function renderPost(post, { board, threadId, showReplyLink, isMod, thread
 
 // --- Board index (list of threads with previews) ----------------------------
 
-export function boardPage({ board, threads, page, pageCount, error, isMod }) {
+export function boardPage({ board, threads, page, pageCount, error, isMod, captchaToken }) {
   const threadHtml = threads
     .map((t) => {
       const op = renderPost(t.op, {
@@ -272,7 +296,7 @@ export function boardPage({ board, threads, page, pageCount, error, isMod }) {
   <details class="new-thread" ${error ? "open" : ""}>
     <summary>Start a new thread</summary>
     ${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
-    ${postForm({ action: `/${board.slug}/thread`, isThread: true, locked: false })}
+    ${postForm({ action: `/${board.slug}/thread`, isThread: true, locked: false, captchaToken })}
   </details>
 
   <hr class="thread-sep">

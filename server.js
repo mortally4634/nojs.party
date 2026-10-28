@@ -23,6 +23,7 @@ import {
   makeSessionCookie,
   clearSessionCookie,
 } from "./auth.js";
+import * as captcha from "./captcha.js";
 
 // Shared urlencoded parser for the script-less POST forms (login, mod, delete).
 const form = express.urlencoded({ extended: false });
@@ -173,8 +174,20 @@ app.get("/:slug/", (req, res, next) => {
       pageCount,
       error: req.query.error,
       isMod: res.locals.isMod,
+      captchaToken: captcha.newChallenge(),
     }),
   });
+});
+
+// --- CAPTCHA image ----------------------------------------------------------
+// Serves the SVG challenge for a token. Unknown/expired tokens 404. The image
+// is never cached, since each challenge is one-time.
+app.get("/captcha/:token", (req, res, next) => {
+  const svg = captcha.renderSvg(req.params.token);
+  if (!svg) return next();
+  res.setHeader("Content-Type", "image/svg+xml; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store, max-age=0");
+  res.send(svg);
 });
 
 // --- Create thread ----------------------------------------------------------
@@ -191,6 +204,10 @@ app.post("/:slug/thread", acceptImage("image"), (req, res, next) => {
   };
 
   if (req.uploadError) return fail(req.uploadError);
+  // CAPTCHA is required to start a thread (not to reply). Checked before other
+  // validation so a bot can't probe the rest of the form without solving it.
+  if (!captcha.verify(req.body.captcha_token, req.body.captcha))
+    return fail("Incorrect or expired CAPTCHA — please try again.");
   // Threads MUST have an image — this is the core rule of the board.
   if (!req.file) return fail("A thread requires an image.");
   if (comment.length > 8000) return fail("Comment is too long.");
