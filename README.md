@@ -1,1 +1,1 @@
-"# nojs.party" 
+# nojs.party
