@@ -1,0 +1,270 @@
+/* style.css — the entire visual layer.
+ *
+ * No CSS framework, no build step. A classic imageboard look (Yotsuba-ish warm
+ * palette) with a dark-mode variant driven purely by the user's OS preference
+ * via prefers-color-scheme. No JS toggle needed; the browser picks.
+ */
+
+:root {
+  --bg: #ffffee;
+  --fg: #800000;
+  --text: #000000;
+  --panel: #f0e0d6;
+  --panel-border: #d9bfb7;
+  --op-bg: #f0e0d6;
+  --reply-bg: #d6daf0;
+  --reply-border: #b7c5d9;
+  --link: #0000ee;
+  --link-visited: #551a8b;
+  --greentext: #789922;
+  --name: #117743;
+  --trip: #228854;
+  --subject: #0f0c5d;
+  --muted: #707070;
+  --accent: #800000;
+  --nav-bg: #fed6af;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #1e1e1e;
+    --fg: #ff7777;
+    --text: #d8d8d8;
+    --panel: #2b2b2b;
+    --panel-border: #3b3b3b;
+    --op-bg: #2b2b2b;
+    --reply-bg: #26303a;
+    --reply-border: #35414d;
+    --link: #6fb3ff;
+    --link-visited: #b48cff;
+    --greentext: #92c44b;
+    --name: #3fb56a;
+    --trip: #4fd084;
+    --subject: #a9b7ff;
+    --muted: #999999;
+    --accent: #ff7777;
+    --nav-bg: #2a2117;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI", Tahoma, Verdana, Arial, sans-serif;
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+a { color: var(--link); text-decoration: none; }
+a:visited { color: var(--link-visited); }
+a:hover { text-decoration: underline; }
+
+/* --- Nav + header -------------------------------------------------------- */
+.boardbar {
+  background: var(--nav-bg);
+  border-bottom: 1px solid var(--panel-border);
+  padding: 4px 10px;
+  font-size: 13px;
+}
+.boardbar a { color: var(--link); }
+.boardbar a.active { font-weight: bold; text-decoration: underline; }
+.boardbar .home { float: right; }
+
+.masthead { text-align: center; padding: 14px 10px 6px; }
+.masthead a { color: inherit; }
+.masthead h1 {
+  margin: 0;
+  color: var(--accent);
+  font-size: 2.4rem;
+  letter-spacing: -1px;
+  font-family: Georgia, "Times New Roman", serif;
+}
+.tagline { margin: 2px 0 0; color: var(--muted); font-style: italic; font-size: 13px; }
+
+main { max-width: 1100px; margin: 0 auto; padding: 10px 14px 40px; }
+
+footer {
+  border-top: 1px solid var(--panel-border);
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+  padding: 14px;
+  margin-top: 30px;
+}
+
+/* --- Home ---------------------------------------------------------------- */
+.intro { background: var(--panel); border: 1px solid var(--panel-border); padding: 12px 16px; border-radius: 4px; }
+.intro h2 { margin-top: 0; color: var(--accent); }
+.intro .stat { color: var(--muted); font-size: 13px; }
+
+.board-list {
+  list-style: none; padding: 0; margin: 18px 0 0;
+  display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+}
+.board-card {
+  background: var(--panel); border: 1px solid var(--panel-border);
+  border-radius: 4px; padding: 12px 14px;
+}
+.board-link { display: flex; align-items: baseline; gap: 8px; }
+.board-slug { font-weight: bold; color: var(--accent); font-size: 1.1rem; }
+.board-title { color: var(--text); }
+.board-link:hover { text-decoration: none; }
+.board-link:hover .board-slug { text-decoration: underline; }
+.board-desc { margin: 6px 0 0; color: var(--muted); font-size: 13px; }
+
+/* --- Board / thread headings --------------------------------------------- */
+.board-head h2 { color: var(--accent); margin: 10px 0 2px; }
+.board-head .board-desc { margin: 0 0 8px; }
+.thread-meta { font-size: 13px; color: var(--muted); }
+.thread-meta .back, .board-head a { color: var(--link); }
+
+/* --- Collapsible forms (native <details>) -------------------------------- */
+details.new-thread, details.reply-box {
+  background: var(--panel); border: 1px solid var(--panel-border);
+  border-radius: 4px; padding: 6px 12px; margin: 8px 0;
+}
+details > summary {
+  cursor: pointer; font-weight: bold; color: var(--accent);
+  padding: 4px 0; user-select: none;
+}
+details[open] > summary { margin-bottom: 8px; }
+
+/* --- Post form ----------------------------------------------------------- */
+.post-form { margin: 4px 0 10px; }
+.form-table { border-collapse: collapse; width: 100%; max-width: 640px; }
+.form-table th {
+  background: var(--nav-bg); border: 1px solid var(--panel-border);
+  text-align: left; padding: 4px 8px; font-size: 13px; white-space: nowrap;
+  width: 1%; vertical-align: top;
+}
+.form-table td { border: 1px solid var(--panel-border); padding: 4px 6px; }
+.form-table input[type="text"],
+.form-table input[type="password"],
+.form-table textarea {
+  width: 100%; max-width: 420px; padding: 4px 6px;
+  border: 1px solid var(--panel-border); background: var(--bg); color: var(--text);
+  font-family: inherit; font-size: 14px;
+}
+.form-table textarea { max-width: 100%; resize: vertical; }
+.hint { color: var(--muted); font-size: 12px; margin-left: 6px; }
+input[type="submit"] {
+  background: var(--nav-bg); border: 1px solid var(--panel-border);
+  padding: 4px 14px; cursor: pointer; font-weight: bold; color: var(--text);
+  border-radius: 3px;
+}
+input[type="submit"]:hover { filter: brightness(0.96); }
+.submit-inline { margin-left: 8px; }
+
+.error {
+  background: #ffdede; color: #a00; border: 1px solid #e0a0a0;
+  padding: 6px 10px; border-radius: 3px; margin: 4px 0; font-size: 13px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .error { background: #3a1e1e; color: #ff9a9a; border-color: #5a2d2d; }
+}
+.locked-note { color: var(--muted); font-style: italic; padding: 6px 0; }
+
+/* --- Threads & posts ----------------------------------------------------- */
+.thread-sep { border: none; border-top: 1px solid var(--panel-border); margin: 10px 0; }
+.thread-actions { font-size: 13px; margin: 4px 0; }
+.view-thread { font-weight: bold; }
+
+.post {
+  display: inline-block; max-width: 100%;
+  padding: 6px 10px; margin: 4px 0; border-radius: 3px;
+  vertical-align: top;
+}
+.post.op { background: var(--op-bg); border: 1px solid var(--panel-border); display: block; }
+.post.reply {
+  background: var(--reply-bg); border: 1px solid var(--reply-border);
+  margin-left: 20px;
+}
+.post-head { font-size: 13px; margin-bottom: 4px; }
+.subject { color: var(--subject); font-weight: bold; }
+.name { color: var(--name); font-weight: bold; }
+.trip { color: var(--trip); font-weight: bold; }
+.date { color: var(--muted); margin: 0 4px; }
+.postno, .replylink { color: var(--muted); }
+.replylink:hover { color: var(--accent); }
+
+.comment { margin: 6px 0 2px; white-space: normal; word-wrap: break-word; overflow-wrap: anywhere; }
+.greentext { color: var(--greentext); }
+.quotelink { color: var(--link); }
+
+/* --- Images / thumbnails ------------------------------------------------- */
+.file { margin: 4px 0; }
+.file-info { display: block; font-size: 12px; color: var(--muted); margin-bottom: 3px; }
+.file-info a { color: var(--link); }
+.thumb {
+  max-width: 250px; max-height: 250px; height: auto; width: auto;
+  border: 1px solid var(--panel-border); display: block;
+}
+.op .thumb { float: left; margin: 0 12px 6px 0; }
+
+.omitted { font-size: 13px; color: var(--muted); margin: 4px 0; clear: both; }
+.previews { clear: both; }
+.replies { clear: both; }
+
+/* --- Delete control (native <details>) ----------------------------------- */
+.delbox { display: inline; }
+.delbox > summary {
+  display: inline; cursor: pointer; color: var(--muted); font-weight: bold;
+  margin-left: 6px; list-style: none;
+}
+.delbox > summary::-webkit-details-marker { display: none; }
+.delbox > summary:hover { color: var(--accent); }
+.del-form {
+  display: inline-block; margin-top: 4px; background: var(--bg);
+  border: 1px solid var(--panel-border); padding: 4px 6px; border-radius: 3px;
+}
+.del-form input[type="password"] {
+  padding: 2px 4px; border: 1px solid var(--panel-border);
+  background: var(--bg); color: var(--text); font-size: 12px; width: 130px;
+}
+.del-form input[type="submit"] { padding: 2px 8px; font-size: 12px; }
+
+/* --- Badges / misc ------------------------------------------------------- */
+.badge { font-size: 12px; padding: 1px 6px; border-radius: 8px; margin-left: 6px; }
+.badge.sticky { background: #e8d8b0; color: #5a4a10; }
+.badge.locked { background: #d8d8d8; color: #444; }
+
+.empty { color: var(--muted); font-style: italic; }
+
+/* --- Staff / moderation -------------------------------------------------- */
+.staff-badge {
+  background: var(--accent); color: #fff; font-size: 11px; font-weight: bold;
+  padding: 1px 6px; border-radius: 8px; text-transform: uppercase;
+}
+.mod-controls { display: inline-flex; gap: 4px; margin-left: 8px; vertical-align: middle; }
+.mod-form { display: inline; }
+.mod-form input[type="submit"] {
+  padding: 0 6px; font-size: 11px; line-height: 16px; font-weight: bold;
+  background: var(--accent); color: #fff; border: 1px solid var(--accent);
+  border-radius: 3px; cursor: pointer;
+}
+.mod-form input[type="submit"]:hover { filter: brightness(1.1); }
+.staff-howto { font-size: 14px; color: var(--text); line-height: 1.6; }
+.staff-howto strong { color: var(--accent); }
+
+/* --- Pagination ---------------------------------------------------------- */
+.pager { margin: 16px 0; text-align: center; }
+.pager .pg {
+  display: inline-block; padding: 3px 9px; margin: 0 2px;
+  border: 1px solid var(--panel-border); border-radius: 3px; background: var(--panel);
+}
+.pager .pg.current { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+.message-page { background: var(--panel); border: 1px solid var(--panel-border); padding: 20px; border-radius: 4px; }
+.message-page h2 { color: var(--accent); margin-top: 0; }
+
+/* --- Responsive ---------------------------------------------------------- */
+@media (max-width: 560px) {
+  .form-table, .form-table tbody, .form-table tr, .form-table th, .form-table td { display: block; width: 100%; }
+  .form-table th { border-bottom: none; }
+  .post.reply { margin-left: 8px; }
+  .op .thumb { float: none; margin: 0 0 6px; }
+}

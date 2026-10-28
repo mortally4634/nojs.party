@@ -1,0 +1,17 @@
+{
+  "name": "nojs-party",
+  "version": "1.0.0",
+  "description": "A fully functional imageboard that works with JavaScript completely disabled.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "multer": "^1.4.5-lts.1"
+  }
+}
